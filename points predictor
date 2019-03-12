@@ -1,0 +1,84 @@
+rm(list = ls())
+
+library(kknn)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+
+
+#gets all data and splits it in half
+fulldata = read.csv("winemag-data-130k-v2.csv")
+set.seed(123)
+datasize <- floor(.2*nrow(fulldata))
+indi = sample(seq_len(nrow(fulldata)),size = datasize)
+data <- fulldata[indi,]
+
+#switches region 1 and region 2 if populated
+data$region_1 <- as.vector(data$region_1)
+data$region_2 <- as.vector(data$region_2)
+ind = which(data$region_2 != "")
+for(i in 1:length(ind)) {
+  index = ind[i]
+  storage = data$region_1[index]
+  data$region_1[index] = data$region_2[index]
+  data$region_2[index] = storage
+}
+
+#sets categorical variables as factors
+data$variety <- as.factor(data$variety)
+data$winery <- as.factor(data$winery)
+data$taster_name <- as.factor(data$taster_name)
+data$province <- as.factor(data$province)
+data$region_1 <- as.factor(data$region_1)
+data$region_2 <- as.factor(data$region_2)
+data$region_2 <- as.factor(data$region_2)
+
+
+#takes half set of data and splits into train and test set
+trainsize <- floor(.5*nrow(data))
+ind2 = sample(seq_len(nrow(data)),size = trainsize)
+train <- data[ind2,]
+test <- data[-ind2,]
+
+#linear fit using price to predict points
+fit = lm(points ~ price, data = train)
+plot(train$price, train$points, xlab = "points", ylab = "price", pch = 1, cex = 0.1)
+abline(fit, col = "red", lwd = 2)
+
+#nearest neighbor fit just using price to predict points
+kv = seq(10,1000,by=90)
+trainpricena = which(is.na(train$price))
+train <- train[-c(trainpricena),]
+testpricena = which(is.na(test$price))
+test <- test[-c(testpricena),]
+MSE = c()
+for(i in 1:length(kv)){
+  nearest = kknn(points~price,train,test,k=kv[i],kernel = "rectangular")
+  MSE[i] = mean((test$points-nearest$fitted.values)^2)
+}
+plot(kv,MSE)
+
+#tree fit on price
+big.tree = rpart(points~price, data=train,
+                 control=rpart.control(minsplit=5,cp=0.0001,xval=10))
+nbig = length(unique(big.tree$where))
+bestcp = big.tree$cptable[ which.min(big.tree$cptable[,"xerror"]), "CP" ] 
+prune = prune(big.tree, cp=bestcp)
+nprune = length(unique(prune$where)) 
+rpart.plot(prune)
+treepredictions = predict(prune,test)
+MSEtree = mean((test$points-treepredictions)^2)
+plot(test$price,test$points)
+oo = order(test$price)
+lines(test$price[oo],treepredictions[oo],col='red',lwd=2)
+
+#tree fit with more variables.. looks like price, taster, and country give the best results from what i've tried
+bigtreeall = rpart(points~price+country+taster_name, data=train,
+                 control=rpart.control(minsplit=5,cp=0.0001,xval=10))
+nbigall = length(unique(bigtreeall$where))
+bestcpall = bigtreeall$cptable[ which.min(bigtreeall$cptable[,"xerror"]), "CP" ] 
+pruneall = prune(bigtreeall, cp=bestcpall)
+allpredictions = predict(pruneall,test)
+MSEtreeall = mean((test$points-allpredictions)^2)
+print(MSEtreeall)
+rpart.plot(pruneall)
