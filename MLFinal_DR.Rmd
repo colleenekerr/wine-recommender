@@ -1,0 +1,287 @@
+---
+title: "Final Scratch Work"
+author: "Dave Rodriguez"
+date: "March 10, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FASLE echo=FALSE}
+
+# Packages
+
+install.packages('RCurl')
+
+set.seed(1)
+
+```
+
+```{r}
+
+# Read in Data
+library(RCurl)
+
+data_path <- getURL("https://raw.githubusercontent.com/colleenekerr/wine-recommender/master/data/wine-data.csv")
+
+lookup_path <- getURL("https://raw.githubusercontent.com/colleenekerr/wine-recommender/master/Varietal_Lookup.csv")
+
+data_raw <- read.csv(text=data_path)
+lookup_table <-read.csv(text=lookup_path)
+
+```
+
+
+```{r}
+
+# Data Preparation
+
+# Save off new dataset to edit, keep only 1000 rows for testing
+data <- data_raw[1:10000,]
+
+# Drop anything with missing price
+index <- which(is.na(data$price))
+data <- data[-c(index),]
+
+# Merge tables to get red/white varietal info, reorder rows/columns
+
+data <- merge(data, lookup_table, all.x=TRUE, by = "variety")
+data <- data[order(data$X),c(2,3,4,5,6,7,8,9,10,11,12,13,1,14,15)]
+
+# Get length of review
+
+data["description"] <- lapply(data["description"], as.character)
+data$desc_Length <- nchar(data$description)
+
+# Fix data issues regarding region_1 and region_2 by
+# Assigning region_1 value to region_2 when region_2 is unvalued
+
+region_cols <- c("region_1","region_2")
+data[region_cols] <- lapply(data[region_cols], as.character)
+
+index <- (data$region_2 == "")
+data$region_2[index] <- data$region_1[index]
+
+data[region_cols] <- lapply(data[region_cols], as.factor)
+
+# Pull out year from wine title
+data$year = stringr::str_extract(data$title, "[0-9]{4}")
+
+colnames(data)
+n <- nrow(data)
+
+```
+
+```{r}
+
+#install.packages("tm")
+library(tm)
+
+# Standardize word cases
+
+descriptions <- tolower(data$description)
+
+# Remove english prepositions and articles, and remove punctuation
+
+descriptions_trim <- removeWords(descriptions, stopwords("en"))
+descriptions_trim <- removePunctuation(descriptions_trim)
+
+# Build frequency table for words in descriptions
+
+corp <- Corpus(VectorSource(descriptions_trim))
+dtm <- DocumentTermMatrix(corp)
+
+# Remove words that appear infrequently (< 1% of data)
+
+dtm <- removeSparseTerms(dtm, .99)
+
+# Convert to a matrix
+
+dtm_matrix <- as.matrix(dtm)
+
+```
+
+```{r}
+
+# Merge frequency matrix into data
+
+data_freq <- cbind(data, dtm_matrix)
+
+# Keep a dataset of only word frequencies and style
+
+style <- as.vector(data$style)
+style_freq <-cbind(style, dtm_matrix)
+
+```
+
+```{r}
+
+# Split out valued and unvalued wine styles
+
+index <- which(is.na(data$style))
+
+style_valued <- style_freq[-index,]
+style_unvalued <- style_freq[index,]
+
+# Split valued data into train and test
+
+l <- nrow(style_valued)
+
+sample <- sample.int(n=l, size= floor(.75*l), replace = FALSE)
+train <- style_valued[sample,]
+test <- style_valued[-sample,]
+
+
+```
+
+```{r}
+
+#install.packages("h2o")
+#library(h2o)
+
+h20Server = h2o.init(nthreads = 1)
+
+X_train <- train[,-1]
+Y_train <- train[,1]
+X_test <- test[,-1]
+Y_test <- test[,1]
+  
+Xtrain = as.h2o(X_train, destination_frame = "Xtrain")
+Ytrain = as.h2o(Y_train, destination_frame = "Ytrain")
+Xtest = as.h2o(X_test, destination_frame = "Xtest")
+Ytest = as.h2o(Y_test, destination_frame = "Ytest")
+
+Xtrain <- Xtrain[-1,]
+Xtest <- Xtest[-1,]
+
+```
+
+
+```{r}
+
+p = ncol(Xtrain)
+
+# Build Neural Network
+
+nn.model =  h2o.deeplearning(x=1:p, y=p+1,
+                     training_frame = h2o.cbind(Xtrain, Ytrain),
+                     hidden = c(10,10,10),                       
+                     epochs = 10,                               
+                     model_id = "simple_nn_model"
+                     )
+
+# compute confusion matrix
+h2o.confusionMatrix(nn.model, h2o.cbind(Xtest, Ytest)) 
+
+
+```
+
+```{r}
+
+# Build Boosted Tree
+
+p = ncol(Xtrain)
+
+# Train model
+
+gbm.model =  h2o.gbm(x=1:p, y=p+1,
+                     training_frame = h2o.cbind(Xtrain, Ytrain),
+                     ntrees = 500,                                  
+                     min_rows = 20,                               
+                     max_depth = 2,                               
+                     model_id = "simple_gbm_model"
+                     )
+
+# compute confusion matrix
+h2o.confusionMatrix(gbm.model, h2o.cbind(Xtest, Ytest)) 
+
+```
+
+
+```{r}
+
+# Repeat above, adding additional columns (country, province, regions) from our original data
+
+# Split out valued and unvalued wine styles
+
+index <- which(is.na(data$style))
+
+data_valued <- data_freq[-index,]
+data_unvalued <- data_freq[index,]
+
+# Split valued data into train and test
+
+l <- nrow(data_valued)
+drop_col <- c(1,3,4,5,6,10,11,12,13,14,16,17)
+
+sample <- sample.int(n=l, size= floor(.75*l), replace = FALSE)
+train <- data_valued[sample,-drop_col]
+test <- data_valued[-sample,-drop_col]
+
+```
+
+```{r}
+
+#install.packages("h2o")
+#library(h2o)
+
+h20Server = h2o.init(nthreads = 1)
+
+X_train <- train[,-5]
+Y_train <- train[,5]
+X_test <- test[,-5]
+Y_test <- test[,5]
+  
+Xtrain = as.h2o(X_train, destination_frame = "Xtrain")
+Ytrain = as.h2o(Y_train, destination_frame = "Ytrain")
+Xtest = as.h2o(X_test, destination_frame = "Xtest")
+Ytest = as.h2o(Y_test, destination_frame = "Ytest")
+
+Xtrain <- Xtrain[-1,]
+Xtest <- Xtest[-1,]
+
+```
+
+```{r}
+
+p = ncol(Xtrain)
+
+# Build Neural Network
+
+nn.model =  h2o.deeplearning(x=1:p, y=p+1,
+                     training_frame = h2o.cbind(Xtrain, Ytrain),
+                     hidden = c(10,10,10),                       
+                     epochs = 10,                               
+                     model_id = "simple_nn_model"
+                     )
+
+# compute confusion matrix
+h2o.confusionMatrix(nn.model, h2o.cbind(Xtest, Ytest)) 
+
+```
+
+```{r}
+
+# Build Boosted Tree
+
+p = ncol(Xtrain)
+
+# Train model
+
+gbm.model =  h2o.gbm(x=1:p, y=p+1,
+                     training_frame = h2o.cbind(Xtrain, Ytrain),
+                     ntrees = 500,                                  
+                     min_rows = 20,                               
+                     max_depth = 2,                               
+                     model_id = "simple_gbm_model"
+                     )
+
+# compute confusion matrix
+h2o.confusionMatrix(gbm.model, h2o.cbind(Xtest, Ytest)) 
+
+```
+
+
+
