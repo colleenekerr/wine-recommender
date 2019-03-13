@@ -4,6 +4,7 @@ library(kknn)
 library(rpart)
 library(rpart.plot)
 library(randomForest)
+library(gbm)
 
 
 #gets all data and splits it in half
@@ -71,6 +72,7 @@ MSEtree = mean((test$points-treepredictions)^2)
 plot(test$price,test$points)
 oo = order(test$price)
 lines(test$price[oo],treepredictions[oo],col='red',lwd=2)
+cat()
 
 #tree fit with more variables.. looks like price, taster, and country give the best results from what i've tried
 bigtreeall = rpart(points~price+country+taster_name, data=train,
@@ -79,6 +81,27 @@ nbigall = length(unique(bigtreeall$where))
 bestcpall = bigtreeall$cptable[ which.min(bigtreeall$cptable[,"xerror"]), "CP" ] 
 pruneall = prune(bigtreeall, cp=bestcpall)
 allpredictions = predict(pruneall,test)
-MSEtreeall = mean((test$points-allpredictions)^2)
+MSEtreeall = sqrt(mean((test$points-allpredictions)^2))
 print(MSEtreeall)
 rpart.plot(pruneall)
+cat("The least MSE with one tree is", MSEtreeall)
+
+#boosting single tree
+tree_depth = c(5, 10, 15, 20)
+tree_num = c(1000, 2000, 5000)
+lambda=c(.001, 0.01, 0.1)
+Boosting_params = expand.grid(tree_depth,tree_num,lambda)
+num_params = nrow(Boosting_params)
+MSEboost = c()
+for(i in 1:num_params){
+  boost_fit =gbm(points~price+country+taster_name,data=train,distribution="gaussian",interaction.depth=Boosting_params[i,1],n.trees=Boosting_params[i,2],shrinkage=Boosting_params[i,3])
+  boostpredictions= predict(boost_fit,test,n.trees=Boosting_params[i,2])
+  MSEboost[i] = mean((test$points-boostpredictions)^2)
+}
+cat("The least MSE with boosting is", min(MSEboost))
+
+#randomforest with more variables
+forest = randomForest(points~price+country+taster_name+variety,data=train,mtry=4,ntree=100)
+forestpredictions = predict(forest,test)
+MSEforest = mean((test$points-forestpredictions)^2)
+
