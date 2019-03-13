@@ -5,14 +5,36 @@ library(rpart)
 library(rpart.plot)
 library(randomForest)
 library(gbm)
+library(h2o)
 
 
-#gets all data and splits it in half
+set.seed(1)
+
+#gets all data and splits it by 20%
 fulldata = read.csv("winemag-data-130k-v2.csv")
-set.seed(123)
 datasize <- floor(.2*nrow(fulldata))
 indi = sample(seq_len(nrow(fulldata)),size = datasize)
 data <- fulldata[indi,]
+
+#removes data points w/o prices
+datapricena = which(is.na(data$price))
+data <- data[-c(datapricena),]
+datapointsna = which(is.na(data$pointsna))
+
+
+#adds red or white style
+variety = read.csv("Varietal_lookup.csv")
+data = merge(data,variety)
+
+#seperates year
+data$year = stringr::str_extract(data$title, "[0-9]{4}")
+data$year <- as.factor(data$year)
+levels(data$year) <- c(levels(data$year),"Unknown")
+data$year[is.na(data$year)] <- "Unknown"
+
+#computes length of review
+data["description"] <- lapply(data["description"], as.character)
+data$desc_Length <- nchar(data$description)
 
 #switches region 1 and region 2 if populated
 data$region_1 <- as.vector(data$region_1)
@@ -34,7 +56,6 @@ data$region_1 <- as.factor(data$region_1)
 data$region_2 <- as.factor(data$region_2)
 data$region_2 <- as.factor(data$region_2)
 
-
 #takes half set of data and splits into train and test set
 trainsize <- floor(.5*nrow(data))
 ind2 = sample(seq_len(nrow(data)),size = trainsize)
@@ -48,10 +69,6 @@ abline(fit, col = "red", lwd = 2)
 
 #nearest neighbor fit just using price to predict points
 kv = seq(10,1000,by=90)
-trainpricena = which(is.na(train$price))
-train <- train[-c(trainpricena),]
-testpricena = which(is.na(test$price))
-test <- test[-c(testpricena),]
 MSE = c()
 for(i in 1:length(kv)){
   nearest = kknn(points~price,train,test,k=kv[i],kernel = "rectangular")
@@ -81,10 +98,10 @@ nbigall = length(unique(bigtreeall$where))
 bestcpall = bigtreeall$cptable[ which.min(bigtreeall$cptable[,"xerror"]), "CP" ] 
 pruneall = prune(bigtreeall, cp=bestcpall)
 allpredictions = predict(pruneall,test)
-MSEtreeall = sqrt(mean((test$points-allpredictions)^2))
+MSEtreeall = mean((test$points-allpredictions)^2)
 print(MSEtreeall)
-rpart.plot(pruneall)
 cat("The least MSE with one tree is", MSEtreeall)
+rpart.plot(pruneall)
 
 #boosting single tree
 tree_depth = c(5, 10, 15, 20)
@@ -94,14 +111,17 @@ Boosting_params = expand.grid(tree_depth,tree_num,lambda)
 num_params = nrow(Boosting_params)
 MSEboost = c()
 for(i in 1:num_params){
-  boost_fit =gbm(points~price+country+taster_name,data=train,distribution="gaussian",interaction.depth=Boosting_params[i,1],n.trees=Boosting_params[i,2],shrinkage=Boosting_params[i,3])
+  boost_fit =gbm(points~price+country+taster_name+style+year+style+desc_Length,data=train,distribution="gaussian",interaction.depth=Boosting_params[i,1],n.trees=Boosting_params[i,2],shrinkage=Boosting_params[i,3])
   boostpredictions= predict(boost_fit,test,n.trees=Boosting_params[i,2])
   MSEboost[i] = mean((test$points-boostpredictions)^2)
 }
-cat("The least MSE with boosting is", min(MSEboost))
+bestboost =gbm(points~price+country+taster_name+year+style+desc_Length,data=train,distribution="gaussian",interaction.depth=5,n.trees=2000,shrinkage=.01)
+bestboostpredictions= predict(bestboost,test,n.trees=2000)
+MSEbestboost = mean((test$points-bestboostpredictions)^2)
+cat("The least MSE with boosting is", MSEbestboost)
 
 #randomforest with more variables
-forest = randomForest(points~price+country+taster_name+variety,data=train,mtry=4,ntree=100)
+forest = randomForest(points~price+country+year+style+desc_Length,data=train,mtry=3,ntree=100)
 forestpredictions = predict(forest,test)
 MSEforest = mean((test$points-forestpredictions)^2)
-
+print(MSEforest)
