@@ -21,7 +21,7 @@ winedata <- winedata[sample(nrow(winedata),10000),]
 ###########################################################################
 
 # Remove ratings from tasters with < 1000 reviews and wines with no reviewer
-winedata <- winedata[winedata$taster_name %in% names(which(table(winedata$taster_name) > 1000)), ]
+# winedata <- winedata[winedata$taster_name %in% names(which(table(winedata$taster_name) > 1000)), ]
 winedata$taster_name[winedata$taster_name==""] <- "Unknown"
 # winedata <- winedata[winedata$taster_name != "NA",]
 
@@ -47,8 +47,21 @@ dtm <- removeSparseTerms(dtm, .99)    # remove words that appear in < 1% of revi
 
 description_word_matrix <- as.matrix(dtm)
 
+winedata <- cbind(winedata, description_word_matrix)
+
+# clusters
+
+wine_clusters <- 
 
 
+
+
+  
+  
+  
+  
+  
+  
 
 winetable <- data.table(winedata)
 data.table(winedata)[,sum(points/points),by=taster_name]
@@ -66,18 +79,4 @@ boxplot(log(stringr::str_length(description)) ~ points, main="log(description le
 
 
 
-#recommenderlab setup
 
-
-
-wineratings = as(winedata, 'realRatingMatrix')
-
-evaluation_scheme=evaluationScheme(
-  wineratings,       # data, must be a realRatingMatrix
-  method='split',# split randomly into training and test set, can be "cross-validation","bootstrap"
-  train=0.6,     # fraction of data used for training
-  k=1,           # number of folds/times to run evaluation, default 1 for split, and 10 for bootstrap/cross-validation
-  given=10       # number of items (movies) given for evaluation per test user
-)
-
-?realRatingMatrix
