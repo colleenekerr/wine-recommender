@@ -1,0 +1,104 @@
+rm(list = ls())
+
+install.packages("qdap")
+install.packages("tm")
+library(qdap)
+PackageList =c('recommenderlab','reshape2','data.table','lattice','curl','RColorBrewer','ggplot2','tm','stats')
+NewPackages=PackageList[!(PackageList %in% 
+                            installed.packages()[,"Package"])]
+if(length(NewPackages)) install.packages(NewPackages,repos = "http://cran.us.r-project.org")
+lapply(PackageList,require,character.only=TRUE)#array function
+
+library(h2o)
+
+
+set.seed(1)
+
+#gets all data and splits it by 20%
+fulldata = read.csv("winemag-data-130k-v2.csv")
+datasize <- floor(.2*nrow(fulldata))
+indi = sample(seq_len(nrow(fulldata)),size = datasize)
+data <- fulldata[indi,]
+
+#removes data points w/o prices
+datapricena = which(is.na(data$price))
+data <- data[-c(datapricena),]
+datapointsna = which(is.na(data$pointsna))
+
+
+#adds red or white style
+variety = read.csv("Varietal_lookup.csv")
+data = merge(data,variety)
+
+#seperates year
+data$year = stringr::str_extract(data$title, "[0-9]{4}")
+data$year <- as.factor(data$year)
+levels(data$year) <- c(levels(data$year),"Unknown")
+data$year[is.na(data$year)] <- "Unknown"
+
+#computes length of review
+data["description"] <- lapply(data["description"], as.character)
+data$desc_Length <- nchar(data$description)
+
+#switches region 1 and region 2 if populated
+data$region_1 <- as.vector(data$region_1)
+data$region_2 <- as.vector(data$region_2)
+ind = which(data$region_2 != "")
+for(i in 1:length(ind)) {
+  index = ind[i]
+  storage = data$region_1[index]
+  data$region_1[index] = data$region_2[index]
+  data$region_2[index] = storage
+}
+
+#sets categorical variables as factors
+data$variety <- as.factor(data$variety)
+data$winery <- as.factor(data$winery)
+data$taster_name <- as.factor(data$taster_name)
+data$province <- as.factor(data$province)
+data$region_1 <- as.factor(data$region_1)
+data$region_2 <- as.factor(data$region_2)
+data$region_2 <- as.factor(data$region_2)
+
+#makes description edits
+data$description <- tolower(data$description)
+data$description <- removeWords(data$description, stopwords("en")) 
+data$description <- removePunctuation(data$description)
+
+corp <- Corpus(VectorSource(data$description))
+dtm <- DocumentTermMatrix(corp)
+dtm <- removeSparseTerms(dtm, .99)    # remove words that appear in < 1% of reviews
+description_word_matrix <- as.matrix(dtm)
+data <- cbind(data, description_word_matrix) # append word matrix to winedata'
+
+#takes half set of data and splits into train and test set
+trainsize <- floor(.5*nrow(data))
+ind2 = sample(seq_len(nrow(data)),size = trainsize)
+train <- data[ind2,]
+test <- data[-ind2,]
+
+##Neutral Network
+h2oServer = h2o.init(nthreads = 1)
+Xtrain = train[-6]
+Ytrain = train[6]
+Xtrain = as.h2o(Xtrain, destination_frame = "Xtrain")
+Ytrain = as.h2o(Ytrain, destination_frame = "Ytrain")
+Xtest = test[-6]
+Ytest = test[6]
+Xtest = as.h2o(Xtest, destination_frame = "Xtest")
+Ytest = as.h2o(Ytest, destination_frame = "Ytest")
+
+p = ncol(Xtrain)
+
+simpleNN = h2o.deeplearning(x=1:p, y=p+1,     # specify which columns are features and which are target
+                            training_frame = h2o.cbind(Xtrain, Ytrain),   # combine features with labels
+                            hidden = c(10,5),      # 2 hidden layers with 50 and 20 neurons 
+                            epochs = 5,       # this is a test run, so 5 epochs is fine
+                            model_id = "simple_dl_model"
+)
+
+phat = h2o.predict(simpleNN, Xtest) # compute probabilities for new data 
+
+phat <- as.vector(phat)
+MSENN = mean((test$points-phat)^2)
+print(MSENN)
