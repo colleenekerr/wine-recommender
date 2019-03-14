@@ -14,7 +14,7 @@ library(h2o)
 
 set.seed(1)
 
-#gets all data and splits it by 20%
+#gets all data and splits it by 50%
 fulldata = read.csv("winemag-data-130k-v2.csv")
 datasize <- floor(.5*nrow(fulldata))
 indi = sample(seq_len(nrow(fulldata)),size = datasize)
@@ -92,7 +92,7 @@ p = ncol(Xtrain)
 
 simpleNN = h2o.deeplearning(x=1:p, y=p+1,     # specify which columns are features and which are target
                             training_frame = h2o.cbind(Xtrain, Ytrain),   # combine features with labels
-                            hidden = c(20, 10),      # 2 hidden layers with 50 and 20 neurons 
+                            hidden = c(20, 10),      # 2 hidden layers with 20 and 10 neurons 
                             epochs = 5,       # this is a test run, so 5 epochs is fine
                             l1 = 1e-5,          # regularize
                             model_id = "simple_dl_model"
